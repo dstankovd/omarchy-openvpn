@@ -1,0 +1,9 @@
+#!/bin/bash
+
+profile_path=$(omarchy file select --title "Import OpenVPN profile" --extensions "ovpn conf")
+
+if [[ -z "$profile_path" ]]; then
+  exit 1
+fi
+
+nmcli connection import type openvpn file "$profile_path"

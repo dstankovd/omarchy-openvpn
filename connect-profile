@@ -1,0 +1,71 @@
+#!/bin/bash
+
+set -o pipefail
+
+profile_uuid=${1:-}
+
+if [[ ! "$profile_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  echo "Invalid VPN profile UUID."
+  exit 2
+fi
+
+profile_type=$(nmcli -g connection.type connection show uuid "$profile_uuid" 2>/dev/null)
+if [[ "$profile_type" != "vpn" ]]; then
+  echo "The selected connection is not a VPN profile."
+  exit 2
+fi
+
+IFS= read -r vpn_username
+IFS= read -r vpn_password
+
+if [[ -z "$vpn_username" || -z "$vpn_password" ]]; then
+  echo "Username and password are required." >&2
+  exit 2
+fi
+
+nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"
+unset vpn_username
+
+# Switch rather than stack VPN sessions. UUID and TYPE are intentionally the
+# only fields requested, so the terse output can be parsed without profile-name
+# escaping concerns.
+while IFS=: read -r active_uuid active_type; do
+  if [[ "$active_type" == "vpn" && "$active_uuid" != "$profile_uuid" ]]; then
+    if ! nmcli connection down uuid "$active_uuid"; then
+      echo "Could not disconnect the currently active VPN session." >&2
+      exit 3
+    fi
+  fi
+done < <(nmcli --terse --fields UUID,TYPE connection show --active)
+
+# nmcli accepts its password-file data from /dev/stdin. Feed it through a pipe
+# so the password exists only in process memory and is never written to disk or
+# exposed in command-line arguments.
+printf 'vpn.secrets.password:%s\n' "$vpn_password" \
+  | timeout --signal=TERM 25s nmcli --wait 20 connection up uuid "$profile_uuid" passwd-file /dev/stdin
+connection_status=$?
+unset vpn_password
+
+if (( connection_status != 0 )); then
+  if (( connection_status == 124 )); then
+    echo "Connection attempt timed out. Check the credentials and try again." >&2
+  fi
+  exit "$connection_status"
+fi
+
+# Some OpenVPN plugins return while NetworkManager still reports "activating".
+# Do not close the credential modal until the final state is known.
+for ((attempt = 0; attempt < 20; attempt++)); do
+  connection_state=$(nmcli -g GENERAL.STATE connection show uuid "$profile_uuid" 2>/dev/null)
+  case "$connection_state" in
+    activated*) exit 0 ;;
+    activating*) sleep 0.5 ;;
+    *)
+      echo "Authentication failed or the VPN connection was rejected." >&2
+      exit 4
+      ;;
+  esac
+done
+
+echo "Timed out waiting for the VPN connection." >&2
+exit 5
