@@ -15,6 +15,6 @@ Rectangle {
   border.width: 1
   border.color: dim
 
-  Text { anchors.centerIn: parent; text: button.label; color: button.foreground; font.family: button.fontFamily; font.pixelSize: Style.font.body }
+  Text { anchors.centerIn: parent; text: button.label; textFormat: Text.PlainText; color: button.foreground; font.family: button.fontFamily; font.pixelSize: Style.font.body }
   MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: button.activated() }
 }

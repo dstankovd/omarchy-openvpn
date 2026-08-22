@@ -1,0 +1,34 @@
+#!/bin/bash
+
+set -euo pipefail
+
+readonly stdout_limit=262144
+
+case "${1:-}" in
+  list)
+    command=(nmcli -t --escape yes -f UUID,NAME,TYPE,DEVICE,STATE connection show)
+    ;;
+  details)
+    profile_uuid=${2:-}
+    if [[ ! "$profile_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+      echo "Invalid VPN profile UUID." >&2
+      exit 2
+    fi
+    command=(nmcli -t -f GENERAL.NAME,GENERAL.STATE,GENERAL.DEVICES,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS connection show uuid "$profile_uuid")
+    ;;
+  *)
+    echo "Usage: nmcli-query <list|details UUID>" >&2
+    exit 2
+    ;;
+esac
+
+# Keep the cap reader in the foreground pipeline so all output is delivered
+# before this helper exits. Quickshell closes a process channel at main-process
+# exit and would otherwise discard late output from process-substitution workers.
+set +e
+timeout --signal=TERM --kill-after=1s 5s "${command[@]}" 2>&1 \
+  | head -c "$stdout_limit"
+command_status=${PIPESTATUS[0]}
+set -e
+
+exit "$command_status"

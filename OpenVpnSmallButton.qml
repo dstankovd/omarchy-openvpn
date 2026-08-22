@@ -20,6 +20,6 @@ Rectangle {
   border.color: urgent ? urgentColor : dim
   opacity: enabled ? 1 : 0.5
 
-  Text { id: labelItem; anchors.centerIn: parent; text: button.label; color: button.urgent ? button.urgentColor : button.foreground; font.family: button.fontFamily; font.pixelSize: Style.font.caption }
+  Text { id: labelItem; anchors.centerIn: parent; text: button.label; textFormat: Text.PlainText; color: button.urgent ? button.urgentColor : button.foreground; font.family: button.fontFamily; font.pixelSize: Style.font.caption }
   MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; enabled: button.enabled; onClicked: button.activated() }
 }

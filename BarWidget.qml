@@ -135,6 +135,7 @@ Panel {
     id: service
     configuredName: root.configuredName
     refreshInterval: root.refreshInterval
+    queryHelper: root.bundledPath("nmcli-query")
     onAuthenticationFailed: Qt.callLater(function() { passwordField.forceActiveFocus() })
   }
 
@@ -224,6 +225,7 @@ Panel {
               Text {
                 width: parent.width
                 text: root.heroStatus.toUpperCase()
+                textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -252,6 +254,7 @@ Panel {
 
           Text {
             visible: root.lastError !== ""; width: parent.width; text: root.lastError
+            textFormat: Text.PlainText
             color: bar ? bar.urgent : Color.urgent; wrapMode: Text.Wrap
             font.family: root.fontFamily; font.pixelSize: Style.font.caption
           }
@@ -272,6 +275,7 @@ Panel {
               Text {
                 width: parent.width
                 text: "Delete “" + root.pendingDeleteName + "”?"
+                textFormat: Text.PlainText
                 color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body
                 elide: Text.ElideRight
               }
@@ -321,10 +325,11 @@ Panel {
                 }
                 ColumnLayout {
                   Layout.fillWidth: true; spacing: 0
-                  Text { Layout.fillWidth: true; text: profile.name; color: root.foreground; elide: Text.ElideRight; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                  Text { Layout.fillWidth: true; text: profile.name; textFormat: Text.PlainText; color: root.foreground; elide: Text.ElideRight; font.family: root.fontFamily; font.pixelSize: Style.font.body }
                   Text {
                     text: profile.active ? "Connected" + (profile.device ? " · " + profile.device : "")
                       : profile.connecting ? "Connecting…" : "Disconnected"
+                    textFormat: Text.PlainText
                     color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
                   }
                 }
@@ -360,13 +365,14 @@ Panel {
             width: parent.width - Style.space(28)
             spacing: Style.space(12)
 
-            Text { width: parent.width; text: "Connect to " + root.authName; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true; elide: Text.ElideRight }
+            Text { width: parent.width; text: "Connect to " + root.authName; textFormat: Text.PlainText; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true; elide: Text.ElideRight }
             Text { width: parent.width; text: "Enter the credentials required by this OpenVPN profile."; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
 
             Text {
               visible: root.lastError !== ""
               width: parent.width
               text: root.lastError
+              textFormat: Text.PlainText
               color: bar ? bar.urgent : Color.urgent
               wrapMode: Text.WordWrap
               font.family: root.fontFamily
@@ -438,7 +444,7 @@ Panel {
             spacing: Style.space(12)
 
             Text { width: parent.width; text: "Rename VPN profile"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
-            Text { width: parent.width; text: "Choose a new display name for “" + root.renameOriginalName + "”."; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+            Text { width: parent.width; text: "Choose a new display name for “" + root.renameOriginalName + "”."; textFormat: Text.PlainText; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
 
             TextField {
               id: renameField
