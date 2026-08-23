@@ -18,12 +18,24 @@ fi
 IFS= read -r vpn_username
 IFS= read -r vpn_password
 
-if [[ -z "$vpn_username" || -z "$vpn_password" ]]; then
+# Certificate-only profiles (vpn.data connection-type=tls) have no username or
+# password at all, so an empty submission is legitimate for them. Anything else
+# still requires both fields.
+vpn_conn_type=$(nmcli -g vpn.data connection show uuid "$profile_uuid" 2>/dev/null \
+  | tr ',' '\n' \
+  | sed -n 's/^[[:space:]]*connection-type[[:space:]]*=[[:space:]]*//p' | head -1)
+
+cert_only=0
+if [[ -z "$vpn_username" && -z "$vpn_password" && "$vpn_conn_type" == "tls" ]]; then
+  cert_only=1
+elif [[ -z "$vpn_username" || -z "$vpn_password" ]]; then
   echo "Username and password are required." >&2
   exit 2
 fi
 
-nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"
+if (( cert_only == 0 )); then
+  nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"
+fi
 unset vpn_username
 
 # Switch rather than stack VPN sessions. UUID and TYPE are intentionally the
@@ -41,8 +53,13 @@ done < <(nmcli --terse --fields UUID,TYPE connection show --active)
 # nmcli accepts its password-file data from /dev/stdin. Feed it through a pipe
 # so the password exists only in process memory and is never written to disk or
 # exposed in command-line arguments.
-printf 'vpn.secrets.password:%s\n' "$vpn_password" \
-  | timeout --signal=TERM 25s nmcli --wait 20 connection up uuid "$profile_uuid" passwd-file /dev/stdin
+if (( cert_only == 1 )); then
+  # No secrets to feed: the stored certificate and key are the credentials.
+  timeout --signal=TERM 25s nmcli --wait 20 connection up uuid "$profile_uuid"
+else
+  printf 'vpn.secrets.password:%s\n' "$vpn_password" \
+    | timeout --signal=TERM 25s nmcli --wait 20 connection up uuid "$profile_uuid" passwd-file /dev/stdin
+fi
 connection_status=$?
 unset vpn_password
 
