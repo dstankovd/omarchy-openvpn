@@ -366,7 +366,7 @@ Panel {
             spacing: Style.space(12)
 
             Text { width: parent.width; text: "Connect to " + root.authName; textFormat: Text.PlainText; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true; elide: Text.ElideRight }
-            Text { width: parent.width; text: "Enter the credentials required by this OpenVPN profile."; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+            Text { width: parent.width; text: "Enter the credentials required by this OpenVPN profile. Certificate-only profiles need none \u2014 leave both blank and press Connect."; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
 
             Text {
               visible: root.lastError !== ""
@@ -416,7 +416,7 @@ Panel {
               anchors.right: parent.right
               spacing: Style.space(8)
               OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Cancel"; onActivated: root.cancelAuthentication() }
-              OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: service.authenticationRunning ? "Connecting…" : "Connect"; enabled: !service.authenticationRunning && service.authUsername.trim() !== "" && service.authPassword !== ""; onActivated: root.submitAuthentication() }
+              OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: service.authenticationRunning ? "Connecting…" : "Connect"; enabled: !service.authenticationRunning && ((service.authUsername.trim() !== "" && service.authPassword !== "") || (service.authUsername.trim() === "" && service.authPassword === "")); onActivated: root.submitAuthentication() }
             }
           }
         }

@@ -146,7 +146,12 @@ Item {
   }
 
   function submitAuthentication(helperPath) {
-    if (authUuid === "" || authUsername.trim() === "" || authPassword === "" || authProcess.running) return
+    if (authUuid === "" || authProcess.running) return
+    // A fully blank submission is how certificate-only (connection-type=tls)
+    // profiles connect; the helper re-checks the profile type before acting.
+    // A half-filled form is still rejected.
+    var blank = authUsername.trim() === "" && authPassword === ""
+    if (!blank && (authUsername.trim() === "" || authPassword === "")) return
     busyUuid = authUuid
     setError("")
     authProcess.input = authUsername.replace(/[\r\n]/g, "") + "\n" + authPassword.replace(/[\r\n]/g, "") + "\n"
