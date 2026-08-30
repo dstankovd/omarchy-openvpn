@@ -18,22 +18,49 @@ fi
 IFS= read -r vpn_username
 IFS= read -r vpn_password
 
-# Certificate-only profiles (vpn.data connection-type=tls) have no username or
-# password at all, so an empty submission is legitimate for them. Anything else
-# still requires both fields.
-vpn_conn_type=$(nmcli -g vpn.data connection show uuid "$profile_uuid" 2>/dev/null \
-  | tr ',' '\n' \
-  | sed -n 's/^[[:space:]]*connection-type[[:space:]]*=[[:space:]]*//p' | head -1)
+vpn_data=$(nmcli -g vpn.data connection show uuid "$profile_uuid" 2>/dev/null)
 
+vpn_data_field() {
+  printf '%s\n' "$vpn_data" \
+    | tr ',' '\n' \
+    | sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" | head -1
+}
+
+vpn_conn_type=$(vpn_data_field connection-type)
+vpn_password_flags=$(vpn_data_field password-flags)
+vpn_stored_username=$(vpn_data_field username)
+if [[ -z "$vpn_stored_username" ]]; then
+  vpn_stored_username=$(nmcli -g vpn.user-name connection show uuid "$profile_uuid" 2>/dev/null)
+fi
+
+# An empty submission is legitimate in two cases:
+#
+#   * Certificate-only profiles (connection-type=tls) have no username or
+#     password at all.
+#   * Profiles NetworkManager can already authenticate on its own: a stored
+#     username plus a system-owned password. NM_SETTING_SECRET_FLAG_NONE is 0
+#     and is also the default when the flag is absent, which means the secret
+#     lives in the connection rather than being asked for on each activation.
+#
+# Anything else still requires both fields.
 cert_only=0
-if [[ -z "$vpn_username" && -z "$vpn_password" && "$vpn_conn_type" == "tls" ]]; then
-  cert_only=1
+use_stored=0
+if [[ -z "$vpn_username" && -z "$vpn_password" ]]; then
+  if [[ "$vpn_conn_type" == "tls" ]]; then
+    cert_only=1
+  elif [[ -n "$vpn_stored_username" ]] \
+    && [[ -z "$vpn_password_flags" || "$vpn_password_flags" == "0" ]]; then
+    use_stored=1
+  else
+    echo "Username and password are required." >&2
+    exit 2
+  fi
 elif [[ -z "$vpn_username" || -z "$vpn_password" ]]; then
   echo "Username and password are required." >&2
   exit 2
 fi
 
-if (( cert_only == 0 )); then
+if (( cert_only == 0 && use_stored == 0 )); then
   nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"
 fi
 unset vpn_username
@@ -53,8 +80,9 @@ done < <(nmcli --terse --fields UUID,TYPE connection show --active)
 # nmcli accepts its password-file data from /dev/stdin. Feed it through a pipe
 # so the password exists only in process memory and is never written to disk or
 # exposed in command-line arguments.
-if (( cert_only == 1 )); then
-  # No secrets to feed: the stored certificate and key are the credentials.
+if (( cert_only == 1 || use_stored == 1 )); then
+  # Nothing to feed: either the stored certificate and key are the credentials,
+  # or NetworkManager holds the password itself.
   timeout --signal=TERM 25s nmcli --wait 20 connection up uuid "$profile_uuid"
 else
   printf 'vpn.secrets.password:%s\n' "$vpn_password" \

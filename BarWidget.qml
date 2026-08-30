@@ -65,7 +65,7 @@ Panel {
   }
 
   function setConnection(profile) {
-    if (service.setConnection(profile)) {
+    if (service.setConnection(profile, bundledPath("connect-profile"))) {
       Qt.callLater(function() { usernameField.forceActiveFocus() })
     }
   }
@@ -137,6 +137,7 @@ Panel {
     refreshInterval: root.refreshInterval
     queryHelper: root.bundledPath("nmcli-query")
     onAuthenticationFailed: Qt.callLater(function() { passwordField.forceActiveFocus() })
+    onAuthenticationPrompted: Qt.callLater(function() { usernameField.forceActiveFocus() })
   }
 
   BarIconButton {
