@@ -70,6 +70,12 @@ Panel {
     }
   }
 
+  function editCredentials(profile) {
+    if (service.editCredentials(profile)) {
+      Qt.callLater(function() { usernameField.forceActiveFocus() })
+    }
+  }
+
   function cancelAuthentication() { service.cancelAuthentication() }
 
   function submitAuthentication() {
@@ -335,6 +341,7 @@ Panel {
                   }
                 }
                 OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: profile.active ? "Disconnect" : (profile.connecting ? "Connecting…" : "Connect"); enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.setConnection(profile) }
+                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Credentials"; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.editCredentials(profile) }
                 OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Rename"; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.requestRename(profile) }
                 OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Delete"; urgent: true; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.requestDelete(profile) }
               }
@@ -366,8 +373,10 @@ Panel {
             width: parent.width - Style.space(28)
             spacing: Style.space(12)
 
-            Text { width: parent.width; text: "Connect to " + root.authName; textFormat: Text.PlainText; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true; elide: Text.ElideRight }
-            Text { width: parent.width; text: "Enter the credentials required by this OpenVPN profile. Certificate-only profiles need none \u2014 leave both blank and press Connect."; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+            Text { width: parent.width; text: (service.rememberCredentials ? "Save credentials for " : "Connect to ") + root.authName; textFormat: Text.PlainText; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true; elide: Text.ElideRight }
+            Text { width: parent.width; text: service.rememberCredentials
+              ? "NetworkManager keeps these and stops asking. The password is stored in the profile, readable by root on this machine."
+              : "Enter the credentials required by this OpenVPN profile. Certificate-only profiles need none \u2014 leave both blank and press Connect."; color: root.dim; wrapMode: Text.WordWrap; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
 
             Text {
               visible: root.lastError !== ""
@@ -417,7 +426,7 @@ Panel {
               anchors.right: parent.right
               spacing: Style.space(8)
               OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Cancel"; onActivated: root.cancelAuthentication() }
-              OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: service.authenticationRunning ? "Connecting…" : "Connect"; enabled: !service.authenticationRunning && ((service.authUsername.trim() !== "" && service.authPassword !== "") || (service.authUsername.trim() === "" && service.authPassword === "")); onActivated: root.submitAuthentication() }
+              OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: service.authenticationRunning ? "Connecting…" : (service.rememberCredentials ? "Save & connect" : "Connect"); enabled: !service.authenticationRunning && ((service.authUsername.trim() !== "" && service.authPassword !== "") || (!service.rememberCredentials && service.authUsername.trim() === "" && service.authPassword === "")); onActivated: root.submitAuthentication() }
             }
           }
         }

@@ -18,6 +18,8 @@ popup for connecting, disconnecting, importing, renaming, and deleting profiles.
 - Shows connected, connecting, disconnected, and unavailable states
 - Lists NetworkManager VPN profiles
 - Connects using a username and password supplied through standard input
+- Connects without prompting when NetworkManager already stores the credentials
+- Saves a username and password into a profile so later connections are silent
 - Disconnects active VPN sessions
 - Displays the active interface, IPv4 address, gateway, and DNS server
 - Imports `.ovpn` and `.conf` profiles using Omarchy's file picker
@@ -60,7 +62,10 @@ Omarchy can subsequently update or remove the git-managed plugin with
 
 Left-click the VPN icon to open the panel.
 
-- Select **Connect** and enter the credentials required by the profile.
+- Select **Connect** and enter the credentials required by the profile. When
+  NetworkManager already holds them, the connection starts without a prompt.
+- Select **Credentials** to store a username and password in the profile, so
+  that later connections need no prompt, or to replace ones already stored.
 - Select **Disconnect** to stop an active connection.
 - Use **Rename** or **Delete** to manage an existing profile.
 - Select **Import profile** to import an OpenVPN configuration through the
@@ -91,6 +96,19 @@ Passwords are passed to the bundled connection helper over standard input and
 then to `nmcli` through its password-file input. They are not written to disk or
 placed in command-line arguments. The supplied username is saved in the
 NetworkManager connection profile.
+
+A profile is activated without any prompt when NetworkManager can authenticate
+it alone: a certificate-only profile (`connection-type=tls`), or a profile that
+carries a username and whose `password-flags` is `0`, meaning the password is
+system-owned rather than requested on each activation. Connecting submits blank
+credentials first and only opens the dialog when the helper reports that one is
+needed, so profiles with agent-owned secrets keep prompting as before.
+
+**Credentials** sets the username and `password-flags=0` on the profile and then
+connects, which is when NetworkManager stores the password. That password is
+kept in the connection file, `/etc/NetworkManager/system-connections/*`, which is
+readable by root on the machine. Profiles whose secrets should stay in a keyring
+agent should keep their existing `password-flags` and use **Connect** instead.
 
 When switching profiles, the plugin disconnects other active VPN connections
 before activating the selected profile. If the new connection fails, the old

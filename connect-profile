@@ -3,6 +3,10 @@
 set -o pipefail
 
 profile_uuid=${1:-}
+remember=0
+if [[ "${2:-}" == "--remember" ]]; then
+  remember=1
+fi
 
 if [[ ! "$profile_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
   echo "Invalid VPN profile UUID."
@@ -60,7 +64,26 @@ elif [[ -z "$vpn_username" || -z "$vpn_password" ]]; then
   exit 2
 fi
 
-if (( cert_only == 0 && use_stored == 0 )); then
+if (( remember == 1 )); then
+  if (( cert_only == 1 || use_stored == 1 )); then
+    echo "Enter the username and password to remember." >&2
+    exit 2
+  fi
+  # Hand the profile over to NetworkManager: it keeps the username, and
+  # password-flags 0 (NM_SETTING_SECRET_FLAG_NONE) makes it store the password
+  # from this activation instead of asking again. A comma is the vpn.data field
+  # separator and cannot be escaped through nmcli, so a username containing one
+  # is rejected rather than silently mangled.
+  if [[ "$vpn_username" == *,* ]]; then
+    echo "The username cannot contain a comma." >&2
+    exit 2
+  fi
+  if ! nmcli connection modify uuid "$profile_uuid" \
+    +vpn.data "username=$vpn_username, password-flags=0"; then
+    echo "Could not save the credentials to the profile." >&2
+    exit 2
+  fi
+elif (( cert_only == 0 && use_stored == 0 )); then
   nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"
 fi
 unset vpn_username

@@ -34,6 +34,9 @@ Item {
   // Set while a blank submission is in flight, so the helper's "credentials
   // required" complaint never reaches the panel: that attempt is speculative
   // and its failure is answered by opening the prompt, not by an error.
+  // Set while the panel is collecting credentials to hand to NetworkManager
+  // for keeping, rather than to use for this one activation.
+  property bool rememberCredentials: false
   property bool silentConnect: false
   property string silentUuid: ""
   property string silentName: ""
@@ -149,6 +152,7 @@ Item {
         authProcess.running = true
         return false
       }
+      rememberCredentials = false
       openAuthentication(profile.uuid, profile.name)
       return true
     }
@@ -166,7 +170,16 @@ Item {
     authPassword = ""
   }
 
+  function editCredentials(profile) {
+    if (!profile || actionProcess.running || authProcess.running) return false
+    setError("")
+    openAuthentication(profile.uuid, profile.name)
+    rememberCredentials = true
+    return true
+  }
+
   function cancelAuthentication() {
+    rememberCredentials = false
     silentConnect = false
     authUuid = ""
     authName = ""
@@ -181,12 +194,13 @@ Item {
     // profiles connect; the helper re-checks the profile type before acting.
     // A half-filled form is still rejected.
     var blank = authUsername.trim() === "" && authPassword === ""
+    if (rememberCredentials && blank) return
     if (!blank && (authUsername.trim() === "" || authPassword === "")) return
     busyUuid = authUuid
     silentConnect = false
     setError("")
     authProcess.input = authUsername.replace(/[\r\n]/g, "") + "\n" + authPassword.replace(/[\r\n]/g, "") + "\n"
-    authProcess.command = [helperPath, authUuid]
+    authProcess.command = rememberCredentials ? [helperPath, authUuid, "--remember"] : [helperPath, authUuid]
     authProcess.running = true
   }
 
@@ -327,6 +341,7 @@ Item {
         } else {
           // Leave silentConnect set until the prompt is on screen so a late
           // stderr stream cannot flash the helper's complaint at the user.
+          service.rememberCredentials = false
           service.openAuthentication(uuid, name)
           service.authenticationPrompted()
         }
