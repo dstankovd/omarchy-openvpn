@@ -31,7 +31,18 @@ Item {
   readonly property bool authenticationRunning: authProcess.running
   readonly property bool importRunning: importProcess.running
 
+  // Set while a blank submission is in flight, so the helper's "credentials
+  // required" complaint never reaches the panel: that attempt is speculative
+  // and its failure is answered by opening the prompt, not by an error.
+  // Set while the panel is collecting credentials to hand to NetworkManager
+  // for keeping, rather than to use for this one activation.
+  property bool rememberCredentials: false
+  property bool silentConnect: false
+  property string silentUuid: ""
+  property string silentName: ""
+
   signal authenticationFailed()
+  signal authenticationPrompted()
 
   function boundedText(value, limit) {
     var result = String(value || "")
@@ -120,14 +131,29 @@ Item {
     }
   }
 
-  function setConnection(profile) {
+  function setConnection(profile, helperPath) {
     if (!profile || profile.connecting || actionProcess.running || authProcess.running) return false
     if (!profile.active) {
-      authUuid = profile.uuid
-      authName = profile.name
+      authUuid = ""
+      authName = ""
       authUsername = ""
       authPassword = ""
       setError("")
+      // NetworkManager may already hold everything this profile needs. Ask the
+      // helper to activate it with no credentials; it answers with exit code 2
+      // when a prompt really is required, and openAuthentication() takes over.
+      if (helperPath && helperPath !== "") {
+        silentConnect = true
+        silentUuid = profile.uuid
+        silentName = profile.name
+        busyUuid = profile.uuid
+        authProcess.input = "\n\n"
+        authProcess.command = [helperPath, profile.uuid]
+        authProcess.running = true
+        return false
+      }
+      rememberCredentials = false
+      openAuthentication(profile.uuid, profile.name)
       return true
     }
     busyUuid = profile.uuid
@@ -137,7 +163,24 @@ Item {
     return false
   }
 
+  function openAuthentication(uuid, name) {
+    authUuid = uuid
+    authName = name
+    authUsername = ""
+    authPassword = ""
+  }
+
+  function editCredentials(profile) {
+    if (!profile || actionProcess.running || authProcess.running) return false
+    setError("")
+    openAuthentication(profile.uuid, profile.name)
+    rememberCredentials = true
+    return true
+  }
+
   function cancelAuthentication() {
+    rememberCredentials = false
+    silentConnect = false
     authUuid = ""
     authName = ""
     authUsername = ""
@@ -151,11 +194,13 @@ Item {
     // profiles connect; the helper re-checks the profile type before acting.
     // A half-filled form is still rejected.
     var blank = authUsername.trim() === "" && authPassword === ""
+    if (rememberCredentials && blank) return
     if (!blank && (authUsername.trim() === "" || authPassword === "")) return
     busyUuid = authUuid
+    silentConnect = false
     setError("")
     authProcess.input = authUsername.replace(/[\r\n]/g, "") + "\n" + authPassword.replace(/[\r\n]/g, "") + "\n"
-    authProcess.command = [helperPath, authUuid]
+    authProcess.command = rememberCredentials ? [helperPath, authUuid, "--remember"] : [helperPath, authUuid]
     authProcess.running = true
   }
 
@@ -282,11 +327,29 @@ Item {
       service.authPassword = ""
     }
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: service.setError(text) }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: { if (!service.silentConnect) service.setError(text) } }
     onExited: function(code) {
       service.busyUuid = ""
-      if (code === 0) service.cancelAuthentication()
-      else service.authenticationFailed()
+      if (service.silentConnect) {
+        var uuid = service.silentUuid
+        var name = service.silentName
+        service.silentUuid = ""
+        service.silentName = ""
+        if (code === 0) {
+          service.silentConnect = false
+          service.cancelAuthentication()
+        } else {
+          // Leave silentConnect set until the prompt is on screen so a late
+          // stderr stream cannot flash the helper's complaint at the user.
+          service.rememberCredentials = false
+          service.openAuthentication(uuid, name)
+          service.authenticationPrompted()
+        }
+      } else if (code === 0) {
+        service.cancelAuthentication()
+      } else {
+        service.authenticationFailed()
+      }
       refreshDelay.restart()
     }
   }
