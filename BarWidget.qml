@@ -19,6 +19,7 @@ Panel {
   property string pendingDeleteUuid: ""
   property string pendingDeleteName: ""
   readonly property string authUuid: service.authUuid
+  readonly property bool certOnlyConnect: service.authCertOnly
   readonly property string authName: service.authName
   property string renameUuid: ""
   property string renameOriginalName: ""
@@ -64,10 +65,39 @@ Panel {
     return decodeURIComponent(String(Qt.resolvedUrl(name)).replace(/^file:\/\//, ""))
   }
 
-  function setConnection(profile) {
-    if (service.setConnection(profile)) {
-      Qt.callLater(function() { usernameField.forceActiveFocus() })
+  // Certificate-only profiles (vpn.data connection-type=tls) have no username or
+  // password, and connect-profile already accepts a blank submission for them.
+  // Ask nmcli first and skip the credential dialog entirely when none is needed.
+  Process {
+    id: certTypeProc
+    property var pendingProfile: null
+    running: false
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: {
+      var profile = certTypeProc.pendingProfile
+      certTypeProc.pendingProfile = null
+      if (!profile) return
+      var certOnly = /connection-type\s*=\s*tls/.test(String(certTypeProc.stdout.text || ""))
+      if (!service.setConnection(profile, certOnly)) return
+      if (certOnly) {
+        // authUsername/authPassword are already blank here.
+        root.submitAuthentication()
+      } else {
+        Qt.callLater(function() { usernameField.forceActiveFocus() })
+      }
     }
+  }
+
+  function setConnection(profile) {
+    if (!profile) return
+    // Active profile: this is a disconnect, no credentials involved.
+    if (profile.active) {
+      service.setConnection(profile)
+      return
+    }
+    certTypeProc.pendingProfile = profile
+    certTypeProc.command = ["nmcli", "-g", "vpn.data", "connection", "show", "uuid", profile.uuid]
+    certTypeProc.running = true
   }
 
   function cancelAuthentication() { service.cancelAuthentication() }
@@ -136,7 +166,7 @@ Panel {
     configuredName: root.configuredName
     refreshInterval: root.refreshInterval
     queryHelper: root.bundledPath("nmcli-query")
-    onAuthenticationFailed: Qt.callLater(function() { passwordField.forceActiveFocus() })
+    onAuthenticationFailed: if (!root.certOnlyConnect) Qt.callLater(function() { passwordField.forceActiveFocus() })
   }
 
   BarIconButton {
@@ -173,7 +203,7 @@ Panel {
     PanelKeyCatcher {
       id: keys
       anchors.fill: parent
-      blocked: root.authUuid !== "" || root.renameUuid !== ""
+      blocked: (root.authUuid !== "" && !root.certOnlyConnect) || root.renameUuid !== ""
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) { if (t === "r" || t === "R") root.refresh() }
@@ -345,7 +375,7 @@ Panel {
       }
 
       Rectangle {
-        visible: root.authUuid !== ""
+        visible: root.authUuid !== "" && !root.certOnlyConnect
         anchors.fill: parent
         z: 10
         color: Qt.rgba(0, 0, 0, 0.62)
