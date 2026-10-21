@@ -23,7 +23,7 @@ Panel {
   property string renameUuid: ""
   property string renameOriginalName: ""
   property string renameName: ""
-  readonly property var connectionInfo: service.connectionInfo
+  readonly property var connectionDetails: service.connectionDetails
   readonly property bool nmcliAvailable: service.nmcliAvailable
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -35,9 +35,10 @@ Panel {
     for (var i = 0; i < profiles.length; i++) if (profiles[i].active) count++
     return count
   }
-  readonly property string activeProfileName: {
-    for (var i = 0; i < profiles.length; i++) if (profiles[i].active) return profiles[i].name
-    return ""
+  readonly property string activeProfileNames: {
+    var names = []
+    for (var i = 0; i < profiles.length; i++) if (profiles[i].active) names.push(profiles[i].name)
+    return names.join(", ")
   }
   readonly property string connectingProfileName: {
     for (var i = 0; i < profiles.length; i++) if (profiles[i].connecting) return profiles[i].name
@@ -47,7 +48,7 @@ Panel {
   readonly property string vpnIcon: "󰖂"
   readonly property string profileIcon: "󰌆"
   readonly property string heroStatus: !nmcliAvailable ? "NetworkManager unavailable"
-    : connectedCount > 0 ? "Connected" + (activeProfileName !== "" ? " · " + activeProfileName : "")
+    : connectedCount > 0 ? "Connected · " + activeProfileNames
     : connectingProfileName !== "" ? "Connecting · " + connectingProfileName
     : profiles.length > 0 ? "Disconnected" : "No VPN profiles found"
   readonly property int refreshInterval: Math.max(2, Math.min(300,
@@ -168,7 +169,7 @@ Panel {
     open: root.opened
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(430))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(520))
+    contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
       id: keys
@@ -293,49 +294,53 @@ Panel {
             }
           }
 
-          Column {
-            visible: root.connectedCount > 0
-            width: parent.width
-            spacing: Style.space(5)
-            Text { text: "CONNECTION STATUS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 1.1 }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Profile"; value: root.connectionInfo["GENERAL.NAME"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "State"; value: root.connectionInfo["GENERAL.STATE"] || "Connected" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Interface"; value: root.connectionInfo["GENERAL.DEVICES"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Address"; value: root.connectionInfo["IP4.ADDRESS[1]"] || root.connectionInfo["IP4.ADDRESS"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Gateway"; value: root.connectionInfo["IP4.GATEWAY"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "DNS"; value: root.connectionInfo["IP4.DNS[1]"] || root.connectionInfo["IP4.DNS"] || "—" }
-            Rectangle { width: parent.width; height: 1; color: root.foreground; opacity: 0.14 }
-          }
-
           Repeater {
             model: root.profiles
-            delegate: Rectangle {
+            delegate: Column {
+              id: row
               required property var modelData
+              required property int index
               readonly property var profile: modelData
-              width: content.width; height: Style.space(48); radius: Style.space(4)
-              color: "transparent"
+              readonly property var details: root.connectionDetails[profile.uuid] || ({})
+              width: content.width
+
+              Rectangle { visible: row.index > 0; width: parent.width; height: 1; color: root.foreground; opacity: 0.14 }
+
               RowLayout {
-                anchors.fill: parent; anchors.leftMargin: Style.space(8); anchors.rightMargin: Style.space(8); spacing: Style.space(10)
+                width: parent.width; height: Style.space(48); spacing: Style.space(10)
                 Text {
+                  id: profileIconText
+                  Layout.leftMargin: Style.space(8)
                   text: root.profileIcon
-                  color: profile.active ? root.foreground : root.dim
+                  color: row.profile.active ? root.foreground : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.subtitle
-                  opacity: root.busyUuid === profile.uuid ? 0.45 : 1
+                  opacity: root.busyUuid === row.profile.uuid ? 0.45 : 1
                 }
                 ColumnLayout {
                   Layout.fillWidth: true; spacing: 0
-                  Text { Layout.fillWidth: true; text: profile.name; textFormat: Text.PlainText; color: root.foreground; elide: Text.ElideRight; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                  Text { Layout.fillWidth: true; text: row.profile.name; textFormat: Text.PlainText; color: root.foreground; elide: Text.ElideRight; font.family: root.fontFamily; font.pixelSize: Style.font.body }
                   Text {
-                    text: profile.active ? "Connected" + (profile.device ? " · " + profile.device : "")
-                      : profile.connecting ? "Connecting…" : "Disconnected"
+                    text: row.profile.active ? "Connected" : row.profile.connecting ? "Connecting…" : "Disconnected"
                     textFormat: Text.PlainText
                     color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
                   }
                 }
-                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: profile.active ? "Disconnect" : (profile.connecting ? "Connecting…" : "Connect"); enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.setConnection(profile) }
-                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Rename"; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.requestRename(profile) }
-                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Delete"; urgent: true; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.requestDelete(profile) }
+                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: row.profile.active ? "Disconnect" : (row.profile.connecting ? "Connecting…" : "Connect"); enabled: root.busyUuid === "" && !row.profile.connecting; onActivated: root.setConnection(row.profile) }
+                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Rename"; enabled: root.busyUuid === "" && !row.profile.connecting; onActivated: root.requestRename(row.profile) }
+                OpenVpnSmallButton { Layout.rightMargin: Style.space(8); foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Delete"; urgent: true; enabled: root.busyUuid === "" && !row.profile.connecting; onActivated: root.requestDelete(row.profile) }
+              }
+
+              Column {
+                visible: row.profile.active
+                x: Style.space(8) + profileIconText.width + Style.space(10)
+                width: parent.width - x - Style.space(8)
+                bottomPadding: Style.space(8)
+                spacing: Style.space(4)
+                OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Interface"; value: row.details.device || "—" }
+                OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Address"; value: row.details.address || "—" }
+                OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Gateway"; value: row.details.gateway || "—" }
+                OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "DNS"; value: row.details.dns || "—" }
               }
             }
           }

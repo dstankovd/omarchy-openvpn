@@ -18,8 +18,9 @@ popup for connecting, disconnecting, importing, renaming, and deleting profiles.
 - Shows connected, connecting, disconnected, and unavailable states
 - Lists NetworkManager VPN profiles
 - Connects using a username and password supplied through standard input
-- Disconnects active VPN sessions
-- Displays the active interface, IPv4 address, gateway, and DNS server
+- Keeps several VPN connections up at once and disconnects each on its own
+- Shows the interface, IPv4 address, gateway, and DNS server under each
+  connected profile
 - Imports `.ovpn` and `.conf` profiles using Omarchy's file picker
 - Renames and deletes profiles
 - Supports keyboard dismissal and Omarchy panel switching
@@ -92,13 +93,24 @@ then to `nmcli` through its password-file input. They are not written to disk or
 placed in command-line arguments. The supplied username is saved in the
 NetworkManager connection profile.
 
-When switching profiles, the plugin disconnects other active VPN connections
-before activating the selected profile. If the new connection fails, the old
-VPN is not restored automatically. Users who require continuous VPN coverage
-should account for this non-atomic switch behavior.
+Connecting a profile leaves other active VPN connections up. When several are
+connected, NetworkManager decides which one carries the default route and DNS
+from each profile's own settings (for example `ipv4.never-default` and DNS
+priority).
 
 Imported VPN profiles can change routes and DNS configuration. Only import
 profiles from sources you trust.
+
+## Development
+
+The tests need `qmltestrunner` from Qt 6. The QML tests load the service with
+small stand-ins for Quickshell's process types, and the helper tests use a fake
+`nmcli`, so neither touches your connections.
+
+```bash
+bash tests/helpers.test.sh
+QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -import tests/stubs -input tests
+```
 
 ## License
 

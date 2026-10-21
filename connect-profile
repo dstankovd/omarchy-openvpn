@@ -38,18 +38,6 @@ if (( cert_only == 0 )); then
 fi
 unset vpn_username
 
-# Switch rather than stack VPN sessions. UUID and TYPE are intentionally the
-# only fields requested, so the terse output can be parsed without profile-name
-# escaping concerns.
-while IFS=: read -r active_uuid active_type; do
-  if [[ "$active_type" == "vpn" && "$active_uuid" != "$profile_uuid" ]]; then
-    if ! nmcli connection down uuid "$active_uuid"; then
-      echo "Could not disconnect the currently active VPN session." >&2
-      exit 3
-    fi
-  fi
-done < <(nmcli --terse --fields UUID,TYPE connection show --active)
-
 # nmcli accepts its password-file data from /dev/stdin. Feed it through a pipe
 # so the password exists only in process memory and is never written to disk or
 # exposed in command-line arguments.

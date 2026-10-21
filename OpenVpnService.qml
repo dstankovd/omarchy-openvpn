@@ -15,7 +15,8 @@ Item {
   property string authName: ""
   property string authUsername: ""
   property string authPassword: ""
-  property var connectionInfo: ({})
+  // uuid -> { state, device, address, gateway, dns } for every connected profile.
+  property var connectionDetails: ({})
   property bool nmcliAvailable: true
 
   property string listOutput: ""
@@ -58,7 +59,8 @@ Item {
 
   function finalizeDetails() {
     if (detailsExitCode === null || !detailsStreamFinished) return
-    if (detailsExitCode === 0) parseDetails(detailsOutput)
+    // On failure the last known details stay; the next refresh replaces them.
+    if (detailsExitCode === 0) connectionDetails = parseDetails(detailsOutput)
     else if (detailsTimedOut) setError("Connection details timed out.")
     else setError(detailsOutput === "" ? "Could not query connection details." : detailsOutput)
   }
@@ -101,10 +103,9 @@ Item {
         connecting: fields[4] === "activating"
       })
     }
-    result.sort(function(a, b) {
-      if (a.active !== b.active) return a.active ? -1 : 1
-      return String(a.name).localeCompare(String(b.name))
-    })
+    // Name order only: with several VPNs up, moving connected rows to the top
+    // would shift the row that was just clicked.
+    result.sort(function(a, b) { return String(a.name).localeCompare(String(b.name)) })
     return result
   }
 
@@ -182,32 +183,48 @@ Item {
     importProcess.running = true
   }
 
+  // nmcli prints one block per connection, each starting with GENERAL.UUID.
   function parseDetails(text) {
-    var info = ({})
+    var raw = ({})
+    var current = null
     var lines = String(text || "").trim().split(/\r?\n/)
     for (var i = 0; i < lines.length; i++) {
       var at = lines[i].indexOf(":")
-      if (lines[i].length > 4096) continue
-      if (at > 0) {
-        var key = boundedField(lines[i].substring(0, at), 128)
-        info[key] = boundedField(lines[i].substring(at + 1).replace(/\\:/g, ":"), 1024)
+      if (lines[i].length > 4096 || at <= 0) continue
+      var key = boundedField(lines[i].substring(0, at), 128)
+      var value = boundedField(lines[i].substring(at + 1).replace(/\\:/g, ":"), 1024)
+      if (key === "GENERAL.UUID") current = raw[value] = ({})
+      else if (current) current[key] = value
+    }
+    var details = ({})
+    for (var uuid in raw) {
+      var info = raw[uuid]
+      details[uuid] = {
+        state: info["GENERAL.STATE"] || "",
+        device: info["GENERAL.DEVICES"] || "",
+        address: info["IP4.ADDRESS[1]"] || info["IP4.ADDRESS"] || "",
+        gateway: info["IP4.GATEWAY"] || "",
+        dns: info["IP4.DNS[1]"] || info["IP4.DNS"] || ""
       }
     }
-    connectionInfo = info
+    return details
+  }
+
+  function activeUuids() {
+    var result = []
+    for (var i = 0; i < profiles.length; i++) if (profiles[i].active) result.push(profiles[i].uuid)
+    return result
   }
 
   function refreshDetails() {
-    var active = null
-    for (var i = 0; i < profiles.length; i++) {
-      if (profiles[i].active) { active = profiles[i]; break }
-    }
-    if (!active) { connectionInfo = ({}); return }
+    var uuids = activeUuids()
+    if (uuids.length === 0) { connectionDetails = ({}); return }
     if (!detailsProcess.running) {
       detailsOutput = ""
       detailsTimedOut = false
       detailsExitCode = null
       detailsStreamFinished = false
-      detailsProcess.command = [queryHelper, "details", active.uuid]
+      detailsProcess.command = [queryHelper, "details"].concat(uuids)
       detailsProcess.running = true
     }
   }
