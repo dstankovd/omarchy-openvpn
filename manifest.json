@@ -18,7 +18,8 @@
     "defaultSection": "right",
     "defaults": {
       "connection": "",
-      "refreshIntervalSec": 5
+      "refreshIntervalSec": 5,
+      "allowSeveralConnections": true
     },
     "schema": [
       {
@@ -36,6 +37,13 @@
         "max": 300,
         "step": 1,
         "defaultValue": 5
+      },
+      {
+        "key": "allowSeveralConnections",
+        "type": "boolean",
+        "label": "Allow several connections",
+        "description": "When off, connecting a VPN disconnects the others first.",
+        "defaultValue": true
       }
     ]
   }

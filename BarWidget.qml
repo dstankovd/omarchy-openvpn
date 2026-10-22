@@ -23,21 +23,25 @@ Panel {
   property string renameUuid: ""
   property string renameOriginalName: ""
   property string renameName: ""
-  readonly property var connectionInfo: service.connectionInfo
+  readonly property var connectionDetails: service.connectionDetails
   readonly property bool nmcliAvailable: service.nmcliAvailable
+  property bool settingsOpen: false
+  property bool pendingDeleteConnected: false
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string configuredName: String(settings.connection || "").trim()
+  readonly property bool allowSeveralConnections: service.settingFlag(settings.allowSeveralConnections, true)
   readonly property int connectedCount: {
     var count = 0
     for (var i = 0; i < profiles.length; i++) if (profiles[i].active) count++
     return count
   }
-  readonly property string activeProfileName: {
-    for (var i = 0; i < profiles.length; i++) if (profiles[i].active) return profiles[i].name
-    return ""
+  readonly property string activeProfileNames: {
+    var names = []
+    for (var i = 0; i < profiles.length; i++) if (profiles[i].active) names.push(profiles[i].name)
+    return names.join(", ")
   }
   readonly property string connectingProfileName: {
     for (var i = 0; i < profiles.length; i++) if (profiles[i].connecting) return profiles[i].name
@@ -47,7 +51,7 @@ Panel {
   readonly property string vpnIcon: "󰖂"
   readonly property string profileIcon: "󰌆"
   readonly property string heroStatus: !nmcliAvailable ? "NetworkManager unavailable"
-    : connectedCount > 0 ? "Connected" + (activeProfileName !== "" ? " · " + activeProfileName : "")
+    : connectedCount > 0 ? "Connected · " + activeProfileNames
     : connectingProfileName !== "" ? "Connecting · " + connectingProfileName
     : profiles.length > 0 ? "Disconnected" : "No VPN profiles found"
   readonly property int refreshInterval: Math.max(2, Math.min(300,
@@ -79,6 +83,7 @@ Panel {
   function requestDelete(profile) {
     pendingDeleteUuid = profile.uuid
     pendingDeleteName = profile.name
+    pendingDeleteConnected = profile.active || profile.connecting
   }
 
   function requestRename(profile) {
@@ -106,11 +111,12 @@ Panel {
   function cancelDelete() {
     pendingDeleteUuid = ""
     pendingDeleteName = ""
+    pendingDeleteConnected = false
   }
 
   function confirmDelete() {
     if (pendingDeleteUuid === "" || service.actionRunning) return
-    service.deleteConnection(pendingDeleteUuid)
+    service.deleteConnection(pendingDeleteUuid, bundledPath("delete-profile"))
     cancelDelete()
   }
 
@@ -118,9 +124,34 @@ Panel {
     service.importProfile(bundledPath("import-profile"))
   }
 
+  function openSettings() { cancelDelete(); settingsOpen = true }
+  function closeSettings() { cancelDelete(); settingsOpen = false }
+
+  // Escape steps back one level: the delete confirmation, then the settings
+  // view, then the panel itself.
+  function handleEscape() {
+    if (pendingDeleteUuid !== "") cancelDelete()
+    else if (settingsOpen) closeSettings()
+    else root.close()
+  }
+
+  // updateEntryInline replaces the widget's whole entry, so merge the new
+  // values into the current settings first, as the built-in panels do.
+  function persistSettings(values) {
+    var entry = { id: root.moduleName }
+    for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
+    for (var key in values) entry[key] = values[key]
+    root.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-  onOpenedChanged: if (opened) { refresh(); Qt.callLater(function() { keys.forceActiveFocus() }) }
+  onOpenedChanged: {
+    if (opened) { refresh(); Qt.callLater(function() { keys.forceActiveFocus() }) }
+    else { settingsOpen = false; cancelDelete() }
+  }
 
   IpcHandler {
     target: root.ipcTarget
@@ -133,6 +164,7 @@ Panel {
 
   OpenVpnService {
     id: service
+    allowSeveralConnections: root.allowSeveralConnections
     configuredName: root.configuredName
     refreshInterval: root.refreshInterval
     queryHelper: root.bundledPath("nmcli-query")
@@ -160,6 +192,12 @@ Panel {
     onPressed: function(code) { if (code === Qt.LeftButton) root.toggle() }
   }
 
+  // The dialogs float over the rows. The panel must be at least as tall as the
+  // open dialog, or the dialog spills past the panel edges.
+  readonly property real dialogHeight: authCard.visible ? authCard.height + Style.space(24)
+    : renameCard.visible ? renameCard.height + Style.space(24)
+    : deleteCard.visible ? deleteCard.height + Style.space(24) : 0
+
   KeyboardPanel {
     id: panel
     anchorItem: button
@@ -168,13 +206,13 @@ Panel {
     open: root.opened
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(430))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(520))
+    contentHeight: panel.fittedContentHeight(Math.max(content.implicitHeight, root.dialogHeight))
 
     PanelKeyCatcher {
       id: keys
       anchors.fill: parent
       blocked: root.authUuid !== "" || root.renameUuid !== ""
-      onCloseRequested: root.close()
+      onCloseRequested: root.handleEscape()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) { if (t === "r" || t === "R") root.refresh() }
 
@@ -193,8 +231,19 @@ Panel {
             width: parent.width
             implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, refreshButton.height)
 
+            OpenVpnIconButton {
+              id: backButton
+              visible: root.settingsOpen
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily
+              icon: ""
+              onActivated: root.closeSettings()
+            }
+
             Text {
               id: heroIcon
+              visible: !root.settingsOpen
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
               text: root.vpnIcon
@@ -206,16 +255,16 @@ Panel {
 
             Column {
               id: heroLabels
-              anchors.left: heroIcon.right
+              anchors.left: root.settingsOpen ? backButton.right : heroIcon.right
               anchors.leftMargin: Style.space(14)
-              anchors.right: refreshButton.left
+              anchors.right: root.settingsOpen ? importButton.left : refreshButton.left
               anchors.rightMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(2)
 
               Text {
                 width: parent.width
-                text: "OpenVPN"
+                text: root.settingsOpen ? "Settings" : "OpenVPN"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
@@ -224,7 +273,7 @@ Panel {
               }
               Text {
                 width: parent.width
-                text: root.heroStatus.toUpperCase()
+                text: (root.settingsOpen ? "OpenVPN" : root.heroStatus).toUpperCase()
                 textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
@@ -235,18 +284,36 @@ Panel {
               }
             }
 
-            Rectangle {
-              id: refreshButton
+            OpenVpnIconButton {
+              id: importButton
+              visible: root.settingsOpen
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(34)
-              height: Style.space(34)
-              radius: Style.space(4)
-              color: refreshMouse.containsMouse ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12) : "transparent"
-              border.width: 1
-              border.color: root.dim
-              Text { anchors.centerIn: parent; text: "\uf021"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
-              MouseArea { id: refreshMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.refresh() }
+              foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily
+              icon: "\uf067"
+              busy: service.importRunning
+              onActivated: root.openImportPicker()
+            }
+
+            OpenVpnIconButton {
+              id: refreshButton
+              visible: !root.settingsOpen
+              anchors.right: settingsButton.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily
+              icon: "\uf021"
+              onActivated: root.refresh()
+            }
+
+            OpenVpnIconButton {
+              id: settingsButton
+              visible: !root.settingsOpen
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily
+              icon: "\uf013"
+              onActivated: root.openSettings()
             }
           }
 
@@ -259,88 +326,95 @@ Panel {
             font.family: root.fontFamily; font.pixelSize: Style.font.caption
           }
 
-          Rectangle {
-            visible: root.pendingDeleteUuid !== ""
+          OpenVpnReveal {
+            shown: !root.settingsOpen
             width: parent.width
-            height: deleteColumn.implicitHeight + Style.space(18)
-            radius: Style.space(4)
-            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-            border.width: 1
-            border.color: bar ? bar.urgent : Color.urgent
-            Column {
-              id: deleteColumn
-              anchors.centerIn: parent
-              width: parent.width - Style.space(20)
-              spacing: Style.space(8)
-              Text {
-                width: parent.width
-                text: "Delete “" + root.pendingDeleteName + "”?"
-                textFormat: Text.PlainText
-                color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-              }
-              Row {
-                anchors.right: parent.right; spacing: Style.space(16)
-                Text {
-                  text: "Cancel"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.body
-                  MouseArea { anchors.fill: parent; anchors.margins: -Style.space(5); cursorShape: Qt.PointingHandCursor; onClicked: root.cancelDelete() }
-                }
-                Text {
-                  text: "Delete"; color: bar ? bar.urgent : Color.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true
-                  MouseArea { anchors.fill: parent; anchors.margins: -Style.space(5); cursorShape: Qt.PointingHandCursor; onClicked: root.confirmDelete() }
-                }
-              }
-            }
-          }
 
-          Column {
-            visible: root.connectedCount > 0
-            width: parent.width
-            spacing: Style.space(5)
-            Text { text: "CONNECTION STATUS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 1.1 }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Profile"; value: root.connectionInfo["GENERAL.NAME"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "State"; value: root.connectionInfo["GENERAL.STATE"] || "Connected" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Interface"; value: root.connectionInfo["GENERAL.DEVICES"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Address"; value: root.connectionInfo["IP4.ADDRESS[1]"] || root.connectionInfo["IP4.ADDRESS"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Gateway"; value: root.connectionInfo["IP4.GATEWAY"] || "—" }
-            OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "DNS"; value: root.connectionInfo["IP4.DNS[1]"] || root.connectionInfo["IP4.DNS"] || "—" }
-            Rectangle { width: parent.width; height: 1; color: root.foreground; opacity: 0.14 }
-          }
+            // Counted by index, so rows survive each refresh and can animate their
+            // own changes; the name sort keeps each index on the same profile.
+            Repeater {
+              model: root.profiles.length
+              delegate: Column {
+                id: row
+                required property int index
+                readonly property var profile: root.profiles[index]
+                  || ({ uuid: "", name: "", active: false, connecting: false, disconnecting: false })
+                readonly property var details: root.connectionDetails[profile.uuid] || ({})
+                width: content.width
 
-          Repeater {
-            model: root.profiles
-            delegate: Rectangle {
-              required property var modelData
-              readonly property var profile: modelData
-              width: content.width; height: Style.space(48); radius: Style.space(4)
-              color: "transparent"
-              RowLayout {
-                anchors.fill: parent; anchors.leftMargin: Style.space(8); anchors.rightMargin: Style.space(8); spacing: Style.space(10)
-                Text {
-                  text: root.profileIcon
-                  color: profile.active ? root.foreground : root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.subtitle
-                  opacity: root.busyUuid === profile.uuid ? 0.45 : 1
-                }
-                ColumnLayout {
-                  Layout.fillWidth: true; spacing: 0
-                  Text { Layout.fillWidth: true; text: profile.name; textFormat: Text.PlainText; color: root.foreground; elide: Text.ElideRight; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                Rectangle { visible: row.index > 0; width: parent.width; height: 1; color: root.foreground; opacity: 0.14 }
+
+                RowLayout {
+                  width: parent.width; height: Style.space(48); spacing: Style.space(10)
                   Text {
-                    text: profile.active ? "Connected" + (profile.device ? " · " + profile.device : "")
-                      : profile.connecting ? "Connecting…" : "Disconnected"
-                    textFormat: Text.PlainText
-                    color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    id: profileIconText
+                    Layout.leftMargin: Style.space(8)
+                    text: root.profileIcon
+                    color: row.profile.active ? root.foreground : root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.subtitle
+                    opacity: root.busyUuid === row.profile.uuid ? 0.45 : 1
+                  }
+                  ColumnLayout {
+                    Layout.fillWidth: true; spacing: 0
+                    Text { Layout.fillWidth: true; text: row.profile.name; textFormat: Text.PlainText; color: root.foreground; elide: Text.ElideRight; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                    Text {
+                      text: service.profileStatus(row.profile)
+                      textFormat: Text.PlainText
+                      color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+                    }
+                  }
+                  // Bound to the profile state and never set by hand, so a
+                  // cancelled credential dialog leaves the switch off.
+                  ToggleSwitch {
+                    Layout.rightMargin: Style.space(8)
+                    checked: service.profileSwitchOn(row.profile)
+                    busy: root.busyUuid !== "" || row.profile.connecting || row.profile.disconnecting
+                    // ToggleSwitch only ignores clicks while busy; dim it as well.
+                    opacity: busy ? 0.55 : 1
+                    Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                    foreground: root.foreground
+                    accent: Color.accent
+                    onToggled: root.setConnection(row.profile)
                   }
                 }
-                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: profile.active ? "Disconnect" : (profile.connecting ? "Connecting…" : "Connect"); enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.setConnection(profile) }
-                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Rename"; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.requestRename(profile) }
-                OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Delete"; urgent: true; enabled: root.busyUuid === "" && !profile.connecting; onActivated: root.requestDelete(profile) }
+
+                OpenVpnReveal {
+                  shown: row.profile.active
+                  width: parent.width
+                  Column {
+                    x: Style.space(8) + profileIconText.width + Style.space(10)
+                    width: parent.width - x - Style.space(8)
+                    bottomPadding: Style.space(8)
+                    spacing: Style.space(4)
+                    OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Interface"; value: row.details.device || "—" }
+                    OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Address"; value: row.details.address || "—" }
+                    OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "Gateway"; value: row.details.gateway || "—" }
+                    OpenVpnInfoPair { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: "DNS"; value: row.details.dns || "—" }
+                  }
+                }
               }
             }
           }
 
-          OpenVpnActionButton { width: parent.width; foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; label: service.importRunning ? "Choose a profile…" : "Import profile"; enabled: !service.importRunning; onActivated: root.openImportPicker() }
+          OpenVpnReveal {
+            shown: root.settingsOpen
+            width: parent.width
+
+            OpenVpnSettingsView {
+              width: parent.width
+              profiles: root.profiles
+              busyUuid: root.busyUuid
+              allowSeveralConnections: root.allowSeveralConnections
+              foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily
+              urgentColor: bar ? bar.urgent : Color.urgent
+              profileIcon: root.profileIcon
+              onSeveralConnectionsToggled: root.persistSettings({ allowSeveralConnections: !root.allowSeveralConnections })
+              onRenameRequested: function(profile) { root.requestRename(profile) }
+              onDeleteRequested: function(profile) { root.requestDelete(profile) }
+            }
+          }
+
         }
       }
 
@@ -349,8 +423,15 @@ Panel {
         anchors.fill: parent
         z: 10
         color: Qt.rgba(0, 0, 0, 0.62)
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        // The dimmed area is part of the dialog: clicks on it must not reach
+        // the switches and buttons underneath.
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
 
         Rectangle {
+          id: authCard
           anchors.centerIn: parent
           width: Math.min(parent.width - Style.space(24), Style.space(320))
           height: authColumn.implicitHeight + Style.space(28)
@@ -427,8 +508,13 @@ Panel {
         anchors.fill: parent
         z: 10
         color: Qt.rgba(0, 0, 0, 0.62)
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
 
         Rectangle {
+          id: renameCard
           anchors.centerIn: parent
           width: Math.min(parent.width - Style.space(24), Style.space(320))
           height: renameColumn.implicitHeight + Style.space(28)
@@ -475,6 +561,55 @@ Panel {
                 enabled: root.renameName.trim() !== "" && root.renameName.trim() !== root.renameOriginalName
                 onActivated: root.confirmRename()
               }
+            }
+          }
+        }
+      }
+
+      // Escape reaches PanelKeyCatcher (not blocked here), and handleEscape
+      // cancels a pending delete first.
+      Rectangle {
+        visible: root.pendingDeleteUuid !== ""
+        anchors.fill: parent
+        z: 10
+        color: Qt.rgba(0, 0, 0, 0.62)
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
+
+        Rectangle {
+          id: deleteCard
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.space(24), Style.space(320))
+          height: deleteColumn.implicitHeight + Style.space(28)
+          radius: Style.space(6)
+          color: Color.popups.background
+          border.width: 1
+          border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
+
+          Column {
+            id: deleteColumn
+            anchors.centerIn: parent
+            width: parent.width - Style.space(28)
+            spacing: Style.space(12)
+
+            Text { width: parent.width; text: "Delete VPN profile"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+            Text {
+              width: parent.width
+              text: "Delete “" + root.pendingDeleteName + "”?" + (root.pendingDeleteConnected ? " It will be disconnected first." : "")
+              textFormat: Text.PlainText
+              color: root.dim
+              wrapMode: Text.Wrap
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Row {
+              anchors.right: parent.right
+              spacing: Style.space(8)
+              OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Cancel"; onActivated: root.cancelDelete() }
+              OpenVpnSmallButton { foreground: root.foreground; dim: root.dim; fontFamily: root.fontFamily; urgentColor: bar ? bar.urgent : Color.urgent; label: "Delete"; urgent: true; enabled: !service.actionRunning; onActivated: root.confirmDelete() }
             }
           }
         }

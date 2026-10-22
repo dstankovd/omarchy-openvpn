@@ -9,15 +9,24 @@ case "${1:-}" in
     command=(nmcli -t --escape yes -f UUID,NAME,TYPE,DEVICE,STATE connection show)
     ;;
   details)
-    profile_uuid=${2:-}
-    if [[ ! "$profile_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+    # One call covers every connected profile: nmcli prints one block per
+    # connection, each starting with its GENERAL.UUID line.
+    shift
+    if (( $# == 0 || $# > 32 )); then
       echo "Invalid VPN profile UUID." >&2
       exit 2
     fi
-    command=(nmcli -t -f GENERAL.NAME,GENERAL.STATE,GENERAL.DEVICES,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS connection show uuid "$profile_uuid")
+    command=(nmcli -t -f GENERAL.UUID,GENERAL.NAME,GENERAL.STATE,GENERAL.DEVICES,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS connection show)
+    for profile_uuid in "$@"; do
+      if [[ ! "$profile_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+        echo "Invalid VPN profile UUID." >&2
+        exit 2
+      fi
+      command+=(uuid "$profile_uuid")
+    done
     ;;
   *)
-    echo "Usage: nmcli-query <list|details UUID>" >&2
+    echo "Usage: nmcli-query <list|details UUID...>" >&2
     exit 2
     ;;
 esac

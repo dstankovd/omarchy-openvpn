@@ -15,8 +15,23 @@ Item {
   property string authName: ""
   property string authUsername: ""
   property string authPassword: ""
-  property var connectionInfo: ({})
+  // uuid -> { state, device, address, gateway, dns } for every connected profile.
+  property var connectionDetails: ({})
   property bool nmcliAvailable: true
+  // When false, connecting a VPN disconnects the others first.
+  property bool allowSeveralConnections: true
+  // What the running panel action does to busyUuid: "connect", "disconnect",
+  // "rename" or "delete".
+  property string busyAction: ""
+  // The action has ended; busy stays until a list started after that arrives.
+  property bool busySettling: false
+  property bool listAfterAction: false
+  property real settleStartedAt: 0
+  // How long a busy state may sit with nothing running before it is released.
+  readonly property int busyWatchdogMs: 10000
+  // lastError came from a failed inventory or details query, which the next
+  // successful list clears. Action errors stay until the next action.
+  property bool listErrorShown: false
 
   property string listOutput: ""
   property string detailsOutput: ""
@@ -40,6 +55,12 @@ Item {
 
   function setError(value) {
     lastError = boundedText(value, 4096).trim()
+    listErrorShown = false
+  }
+
+  function setListError(value) {
+    setError(value)
+    listErrorShown = true
   }
 
   function finalizeList() {
@@ -47,20 +68,27 @@ Item {
     nmcliAvailable = listExitCode === 0
     if (listExitCode === 0) {
       profiles = parseProfiles(listOutput)
-      if (authUuid === "" && !actionProcess.running && !importProcess.running) setError("")
+      if (listErrorShown) setError("")
       refreshDetails()
     } else if (listTimedOut) {
-      setError("NetworkManager inventory timed out.")
+      setListError("NetworkManager inventory timed out.")
     } else {
-      setError(listOutput === "" ? "Could not query NetworkManager profiles." : listOutput)
+      setListError(listOutput === "" ? "Could not query NetworkManager profiles." : listOutput)
+    }
+    // A list that started before the action ended still shows the old state,
+    // so keep the action's status until a newer list arrives.
+    if (busySettling) {
+      if (listAfterAction) clearBusy()
+      else refreshDelay.restart()
     }
   }
 
   function finalizeDetails() {
     if (detailsExitCode === null || !detailsStreamFinished) return
-    if (detailsExitCode === 0) parseDetails(detailsOutput)
-    else if (detailsTimedOut) setError("Connection details timed out.")
-    else setError(detailsOutput === "" ? "Could not query connection details." : detailsOutput)
+    // On failure the last known details stay; the next refresh replaces them.
+    if (detailsExitCode === 0) connectionDetails = parseDetails(detailsOutput)
+    else if (detailsTimedOut) setListError("Connection details timed out.")
+    else setListError(detailsOutput === "" ? "Could not query connection details." : detailsOutput)
   }
 
   function boundedField(value, limit) {
@@ -98,13 +126,13 @@ Item {
         device: boundedField(fields[3], 128),
         state: boundedField(fields[4], 64),
         active: fields[4] === "activated",
-        connecting: fields[4] === "activating"
+        connecting: fields[4] === "activating",
+        disconnecting: fields[4] === "deactivating"
       })
     }
-    result.sort(function(a, b) {
-      if (a.active !== b.active) return a.active ? -1 : 1
-      return String(a.name).localeCompare(String(b.name))
-    })
+    // Name order only: with several VPNs up, moving connected rows to the top
+    // would shift the row that was just clicked.
+    result.sort(function(a, b) { return String(a.name).localeCompare(String(b.name)) })
     return result
   }
 
@@ -115,6 +143,7 @@ Item {
       listTimedOut = false
       listExitCode = null
       listStreamFinished = false
+      listAfterAction = busySettling
       listProcess.command = [queryHelper, "list"]
       listProcess.running = true
     }
@@ -130,7 +159,7 @@ Item {
       setError("")
       return true
     }
-    busyUuid = profile.uuid
+    startBusy(profile.uuid, "disconnect")
     setError("")
     actionProcess.command = ["nmcli", "connection", "down", "uuid", profile.uuid]
     actionProcess.running = true
@@ -146,33 +175,102 @@ Item {
   }
 
   function submitAuthentication(helperPath) {
-    if (authUuid === "" || authProcess.running) return
+    if (authUuid === "" || authProcess.running || actionProcess.running) return
     // A fully blank submission is how certificate-only (connection-type=tls)
     // profiles connect; the helper re-checks the profile type before acting.
     // A half-filled form is still rejected.
     var blank = authUsername.trim() === "" && authPassword === ""
     if (!blank && (authUsername.trim() === "" || authPassword === "")) return
-    busyUuid = authUuid
+    startBusy(authUuid, "connect")
     setError("")
     authProcess.input = authUsername.replace(/[\r\n]/g, "") + "\n" + authPassword.replace(/[\r\n]/g, "") + "\n"
-    authProcess.command = [helperPath, authUuid]
+    authProcess.command = connectCommand(helperPath, authUuid)
     authProcess.running = true
   }
 
   function renameConnection(uuid, nextName) {
     if (uuid === "" || nextName === "" || actionProcess.running) return
-    busyUuid = uuid
+    startBusy(uuid, "rename")
     setError("")
     actionProcess.command = ["nmcli", "connection", "modify", "uuid", uuid, "connection.id", nextName]
     actionProcess.running = true
   }
 
-  function deleteConnection(uuid) {
+  // The delete helper disconnects a connected profile before deleting it.
+  function deleteConnection(uuid, helperPath) {
     if (uuid === "" || actionProcess.running) return
-    busyUuid = uuid
+    startBusy(uuid, "delete")
     setError("")
-    actionProcess.command = ["nmcli", "connection", "delete", "uuid", uuid]
+    actionProcess.command = [helperPath, uuid]
     actionProcess.running = true
+  }
+
+  // A new action replaces one that is still settling.
+  function startBusy(uuid, action) {
+    busyUuid = uuid
+    busyAction = action
+    busySettling = false
+  }
+
+  function settleAction() {
+    busySettling = true
+    settleStartedAt = Date.now()
+    refreshDelay.restart()
+  }
+
+  // Safety net: busy with no process running, and no refresh pending for a
+  // whole watchdog period, means a helper never started or never reported its
+  // exit. Release it so the switches do not stay disabled until a restart.
+  function releaseStuckBusy(now) {
+    if (busyUuid === "" || actionProcess.running || authProcess.running) return false
+    if (busySettling && now - settleStartedAt < busyWatchdogMs) return false
+    console.warn("openvpn-widget", "released a busy state that no action ended")
+    clearBusy()
+    return true
+  }
+
+  function clearBusy() {
+    busyUuid = ""
+    busyAction = ""
+    busySettling = false
+  }
+
+  // Status line under a profile name; a running panel action wins over the
+  // state NetworkManager last reported.
+  function profileStatus(profile) {
+    if (profile.uuid === busyUuid) {
+      if (busyAction === "connect") return "Connecting…"
+      if (busyAction === "disconnect") return "Disconnecting…"
+      if (busyAction === "delete") return "Deleting…"
+    }
+    if (profile.disconnecting) return "Disconnecting…"
+    if (profile.connecting) return "Connecting…"
+    return profile.active ? "Connected" : "Disconnected"
+  }
+
+  // The switch shows where a running action is heading.
+  function profileSwitchOn(profile) {
+    if (profile.uuid === busyUuid) {
+      if (busyAction === "connect") return true
+      if (busyAction === "disconnect") return false
+    }
+    return profile.active || profile.connecting
+  }
+
+  function connectCommand(helperPath, uuid) {
+    var command = [helperPath, uuid]
+    if (!allowSeveralConnections) command.push("--exclusive")
+    return command
+  }
+
+  // A boolean setting may arrive as a string: omarchy bar set stores one
+  // unless given --json.
+  function settingFlag(value, fallback) {
+    if (value === true || value === false) return value
+    var text = String(value === undefined || value === null ? "" : value).trim().toLowerCase()
+    if (text === "true") return true
+    if (text === "false") return false
+    return fallback
   }
 
   function importProfile(helperPath) {
@@ -182,32 +280,48 @@ Item {
     importProcess.running = true
   }
 
+  // nmcli prints one block per connection, each starting with GENERAL.UUID.
   function parseDetails(text) {
-    var info = ({})
+    var raw = ({})
+    var current = null
     var lines = String(text || "").trim().split(/\r?\n/)
     for (var i = 0; i < lines.length; i++) {
       var at = lines[i].indexOf(":")
-      if (lines[i].length > 4096) continue
-      if (at > 0) {
-        var key = boundedField(lines[i].substring(0, at), 128)
-        info[key] = boundedField(lines[i].substring(at + 1).replace(/\\:/g, ":"), 1024)
+      if (lines[i].length > 4096 || at <= 0) continue
+      var key = boundedField(lines[i].substring(0, at), 128)
+      var value = boundedField(lines[i].substring(at + 1).replace(/\\:/g, ":"), 1024)
+      if (key === "GENERAL.UUID") current = raw[value] = ({})
+      else if (current) current[key] = value
+    }
+    var details = ({})
+    for (var uuid in raw) {
+      var info = raw[uuid]
+      details[uuid] = {
+        state: info["GENERAL.STATE"] || "",
+        device: info["GENERAL.DEVICES"] || "",
+        address: info["IP4.ADDRESS[1]"] || info["IP4.ADDRESS"] || "",
+        gateway: info["IP4.GATEWAY"] || "",
+        dns: info["IP4.DNS[1]"] || info["IP4.DNS"] || ""
       }
     }
-    connectionInfo = info
+    return details
+  }
+
+  function activeUuids() {
+    var result = []
+    for (var i = 0; i < profiles.length; i++) if (profiles[i].active) result.push(profiles[i].uuid)
+    return result
   }
 
   function refreshDetails() {
-    var active = null
-    for (var i = 0; i < profiles.length; i++) {
-      if (profiles[i].active) { active = profiles[i]; break }
-    }
-    if (!active) { connectionInfo = ({}); return }
+    var uuids = activeUuids()
+    if (uuids.length === 0) { connectionDetails = ({}); return }
     if (!detailsProcess.running) {
       detailsOutput = ""
       detailsTimedOut = false
       detailsExitCode = null
       detailsStreamFinished = false
-      detailsProcess.command = [queryHelper, "details", active.uuid]
+      detailsProcess.command = [queryHelper, "details"].concat(uuids)
       detailsProcess.running = true
     }
   }
@@ -236,9 +350,8 @@ Item {
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: service.setError(text) }
     onExited: function(code) {
-      service.busyUuid = ""
       if (code !== 0 && service.lastError !== "") console.warn("openvpn-widget", service.lastError)
-      refreshDelay.restart()
+      service.settleAction()
     }
   }
 
@@ -284,15 +397,20 @@ Item {
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: service.setError(text) }
     onExited: function(code) {
-      service.busyUuid = ""
       if (code === 0) service.cancelAuthentication()
       else service.authenticationFailed()
-      refreshDelay.restart()
+      service.settleAction()
     }
   }
 
   Timer { interval: service.refreshInterval; running: true; repeat: true; triggeredOnStart: true; onTriggered: service.refresh() }
   Timer { id: refreshDelay; interval: 700; onTriggered: service.refresh() }
+  Timer {
+    interval: service.busyWatchdogMs
+    repeat: true
+    running: service.busyUuid !== ""
+    onTriggered: service.releaseStuckBusy(Date.now())
+  }
   Timer {
     id: listDeadline
     interval: 6000
