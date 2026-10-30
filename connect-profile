@@ -34,7 +34,10 @@ elif [[ -z "$vpn_username" || -z "$vpn_password" ]]; then
 fi
 
 if (( cert_only == 0 )); then
-  nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"
+  if ! nmcli connection modify uuid "$profile_uuid" vpn.user-name "$vpn_username"; then
+    echo "Could not save the VPN username." >&2
+    exit 3
+  fi
 fi
 unset vpn_username
 

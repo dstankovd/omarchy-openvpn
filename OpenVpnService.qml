@@ -234,10 +234,13 @@ Item {
   Process {
     id: actionProcess
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: service.setError(text) }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: if (text !== "") service.setError(text) }
     onExited: function(code) {
       service.busyUuid = ""
-      if (code !== 0 && service.lastError !== "") console.warn("openvpn-widget", service.lastError)
+      if (code !== 0) {
+        if (service.lastError === "") service.setError("NetworkManager action failed.")
+        console.warn("openvpn-widget", service.lastError)
+      }
       refreshDelay.restart()
     }
   }
@@ -265,9 +268,10 @@ Item {
   Process {
     id: importProcess
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: service.setError(text) }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: if (text !== "") service.setError(text) }
     onExited: function(code) {
       if (code === 1) service.setError("")
+      else if (code !== 0 && service.lastError === "") service.setError("Could not import the OpenVPN profile.")
       refreshDelay.restart()
     }
   }
