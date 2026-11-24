@@ -10,6 +10,10 @@ Item {
   property string queryHelper: ""
   property var profiles: []
   property string lastError: ""
+  property string errorSource: ""
+  property string importOutput: ""
+  property var importExitCode: null
+  property bool importStreamFinished: false
   property string busyUuid: ""
   property string authUuid: ""
   property string authName: ""
@@ -38,8 +42,17 @@ Item {
     return result.length > limit ? result.substring(0, limit) : result
   }
 
-  function setError(value) {
+  function setError(value, source) {
     lastError = boundedText(value, 4096).trim()
+    errorSource = lastError === "" ? "" : (source || "action")
+  }
+
+  function finalizeImport() {
+    // Process exit and stderr completion can arrive in either order.
+    if (importExitCode === null || !importStreamFinished) return
+    if (importExitCode === 0 || importExitCode === 1) setError("")
+    else setError(importOutput || "Could not import OpenVPN profile.")
+    refreshDelay.restart()
   }
 
   function finalizeList() {
@@ -47,12 +60,12 @@ Item {
     nmcliAvailable = listExitCode === 0
     if (listExitCode === 0) {
       profiles = parseProfiles(listOutput)
-      if (authUuid === "" && !actionProcess.running && !importProcess.running) setError("")
+      if (errorSource === "inventory") setError("")
       refreshDetails()
     } else if (listTimedOut) {
-      setError("NetworkManager inventory timed out.")
+      setError("NetworkManager inventory timed out.", "inventory")
     } else {
-      setError(listOutput === "" ? "Could not query NetworkManager profiles." : listOutput)
+      setError(listOutput === "" ? "Could not query NetworkManager profiles." : listOutput, "inventory")
     }
   }
 
@@ -178,6 +191,9 @@ Item {
   function importProfile(helperPath) {
     if (importProcess.running) return
     setError("")
+    importOutput = ""
+    importExitCode = null
+    importStreamFinished = false
     importProcess.command = [helperPath]
     importProcess.running = true
   }
@@ -265,10 +281,17 @@ Item {
   Process {
     id: importProcess
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: service.setError(text) }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        service.importOutput = service.boundedText(text, 4096).trim()
+        service.importStreamFinished = true
+        service.finalizeImport()
+      }
+    }
     onExited: function(code) {
-      if (code === 1) service.setError("")
-      refreshDelay.restart()
+      service.importExitCode = code
+      service.finalizeImport()
     }
   }
 
