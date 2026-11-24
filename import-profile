@@ -1,9 +1,16 @@
 #!/bin/bash
 
+# Exit 1 means picker cancellation only; all import/chooser failures use 2.
 profile_path=$(omarchy file select --title "Import OpenVPN profile" --extensions "ovpn conf")
-
-if [[ -z "$profile_path" ]]; then
+picker_status=$?
+if (( picker_status == 1 )); then
   exit 1
+elif (( picker_status != 0 )); then
+  echo "Could not open the OpenVPN profile picker." >&2
+  exit 2
+elif [[ -z "$profile_path" ]]; then
+  echo "The file picker returned no OpenVPN profile path." >&2
+  exit 2
 fi
 
-nmcli connection import type openvpn file "$profile_path"
+nmcli connection import type openvpn file "$profile_path" || exit 2

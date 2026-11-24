@@ -64,7 +64,8 @@ Left-click the VPN icon to open the panel.
 - Select **Disconnect** to stop an active connection.
 - Use **Rename** or **Delete** to manage an existing profile.
 - Select **Import profile** to import an OpenVPN configuration through the
-  Omarchy file picker.
+  Omarchy file picker. Import failures remain visible after automatic profile
+  refreshes until you start another action. Cancelling the picker shows no error.
 - Press `R` while the panel has focus to refresh it.
 - Press `Escape` to close the panel or credential dialog.
 
