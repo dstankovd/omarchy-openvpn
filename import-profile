@@ -6,4 +6,17 @@ if [[ -z "$profile_path" ]]; then
   exit 1
 fi
 
-nmcli connection import type openvpn file "$profile_path"
+output=$(nmcli connection import type openvpn file "$profile_path") || exit 2
+echo "$output"
+
+# NetworkManager ignores OpenVPN's split-tunnel directives and makes the VPN the
+# default route. When the profile asks not to take the default route, apply the
+# equivalent NetworkManager setting to the new connection.
+if grep -qE '^[[:space:]]*(route-nopull|pull-filter[[:space:]]+ignore[[:space:]]+"?redirect-gateway)' "$profile_path"; then
+  uuid=$(grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' <<<"$output" | head -1)
+  if [[ -z "$uuid" ]] \
+    || ! nmcli connection modify uuid "$uuid" ipv4.never-default yes ipv6.never-default yes; then
+    echo "Imported the profile, but could not keep it from taking the default route." >&2
+    exit 2
+  fi
+fi
