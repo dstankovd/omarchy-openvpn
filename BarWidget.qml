@@ -114,7 +114,11 @@ Panel {
     cancelDelete()
   }
 
+  // The panel is a full-screen overlay layer whose click-catcher sits above
+  // normal windows, so it swallows clicks meant for the file chooser. Close it
+  // first, and reopen it once the import finishes to show the result.
   function openImportPicker() {
+    root.close()
     service.importProfile(bundledPath("import-profile"))
   }
 
@@ -137,6 +141,7 @@ Panel {
     refreshInterval: root.refreshInterval
     queryHelper: root.bundledPath("nmcli-query")
     onAuthenticationFailed: Qt.callLater(function() { passwordField.forceActiveFocus() })
+    onImportFinished: function(code) { if (code !== 1) root.open() }
   }
 
   BarIconButton {

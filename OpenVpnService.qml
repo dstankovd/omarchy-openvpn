@@ -32,6 +32,7 @@ Item {
   readonly property bool importRunning: importProcess.running
 
   signal authenticationFailed()
+  signal importFinished(int code)
 
   function boundedText(value, limit) {
     var result = String(value || "")
@@ -269,6 +270,7 @@ Item {
     onExited: function(code) {
       if (code === 1) service.setError("")
       refreshDelay.restart()
+      service.importFinished(code)
     }
   }
 
